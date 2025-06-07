@@ -6,31 +6,30 @@ import (
 	"fmt"
 	"io"
 	"sync"
-
-	"github.com/google/uuid"
 )
 
 var (
-	ErrSoMuchWorkers = errors.New("number of workers so much")
+	ErrSoMuchWorkers  = errors.New("number of workers so much")
+	ErrNoWorkers      = errors.New("no workers")
+	ErrNilTask        = errors.New("nil task cant be submitted")
+	ErrNilTaskChannel = errors.New("nil task channel")
+	ErrBadWorkersNums = errors.New("initial workers num cant be less then max workers num")
 )
 
-type Workerpool interface {
+type WorkerPool interface {
 	AddWorker() error
 	DeleteWorker()
 	Submit(r io.Reader) error
 	Free()
 	Wait()
-	Close()
 }
 
 type workerPool struct {
-	mtx sync.Mutex
-	wg  *sync.WaitGroup
-
+	mtx        sync.Mutex
+	wg         *sync.WaitGroup
 	numWorkers uint64
 	maxWorkers uint64
-
-	tasks chan io.Reader
+	tasks      chan io.Reader
 }
 
 func NewWorkerPool(
@@ -38,15 +37,23 @@ func NewWorkerPool(
 	initialWorkersNum uint64,
 	maxWorkersNum uint64,
 	maxTasks uint64,
-) *workerPool {
+) (*workerPool, error) {
 	tasks := make(chan io.Reader, maxTasks)
 	wg := sync.WaitGroup{}
 
+	if initialWorkersNum > maxWorkersNum {
+		return nil, ErrBadWorkersNums
+	}
+
+	var numWorkers uint64
 	for range initialWorkersNum {
-		uid, _ := uuid.NewV7()
-		wrk := NewWorker(uid, tasks, &wg)
+		wrk, err := NewWorker(tasks, &wg)
+		if err != nil {
+			free(tasks, uint64(numWorkers))
+			return nil, fmt.Errorf("failed to add worker: %w", err)
+		}
 		go wrk.Process(ctx)
-		wg.Add(1)
+		numWorkers++
 	}
 
 	return &workerPool{
@@ -54,47 +61,58 @@ func NewWorkerPool(
 		wg:         &wg,
 		maxWorkers: maxWorkersNum,
 		tasks:      tasks,
-		numWorkers: initialWorkersNum,
-	}
+		numWorkers: initialWorkersNum}, nil
 }
 
 func (w *workerPool) AddWorker(ctx context.Context) error {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
-
 	if w.numWorkers >= w.maxWorkers {
 		return ErrSoMuchWorkers
 	}
 
-	uid, err := uuid.NewV7()
+	newWorker, err := NewWorker(w.tasks, w.wg)
 	if err != nil {
-		return fmt.Errorf("failed to gen uuid: %w", err)
+		return fmt.Errorf("failed to add worker: %w", err)
 	}
 
-	newWorker := NewWorker(uid, w.tasks, w.wg)
-	w.numWorkers++
-
 	go newWorker.Process(ctx)
-	w.wg.Add(1)
+	w.numWorkers++
 
 	return nil
 }
-
-func (w *workerPool) DeleteWorker() {
+func (w *workerPool) DeleteWorker() error {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
 
+	if w.tasks == nil {
+		return ErrNilTaskChannel
+	}
+
 	if w.numWorkers == 0 {
-		return
+		return ErrNoWorkers
 	}
 
 	w.tasks <- nil
 	w.numWorkers--
+
+	return nil
+}
+
+func free(tasks chan io.Reader, numWorkers uint64) {
+	if tasks == nil {
+		return
+	}
+
+	for range numWorkers {
+		tasks <- nil
+	}
 }
 
 func (w *workerPool) Free() {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
+	w.Wait()
 
 	if w.tasks == nil {
 		return
@@ -104,26 +122,23 @@ func (w *workerPool) Free() {
 		w.tasks <- nil
 		w.numWorkers--
 	}
-
-	close(w.tasks)
-	w.tasks = nil
 }
 
 func (w *workerPool) Submit(r io.Reader) error {
+	if w.tasks == nil {
+		return ErrNilTaskChannel
+	}
+
+	if r == nil {
+		return ErrNilTask
+	}
+
 	w.tasks <- r
+	w.wg.Add(1)
+
 	return nil
 }
 
 func (w *workerPool) Wait() {
-	fmt.Println("start wait in wait")
 	w.wg.Wait()
-	fmt.Println("stop wait in wait")
-}
-
-func (w *workerPool) Close() error {
-	w.Free()
-	fmt.Println("start wait in close")
-	w.Wait()
-	fmt.Println("stop wait in close")
-	return nil
 }

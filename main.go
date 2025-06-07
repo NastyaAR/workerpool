@@ -4,20 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 )
 
 func main() {
 	ctx := context.Background()
-
-	wPool := NewWorkerPool(ctx, 3, 6, 10)
-
-	file, err := os.Open("test.txt")
+	wPool, err := NewWorkerPool(ctx, 3, 6, 10)
 	if err != nil {
-		fmt.Println("Ошибка при открытии файла:", err)
-		return
+		panic(err)
 	}
-	defer file.Close()
 
 	buf1 := bytes.NewBufferString("aaa")
 	buf2 := bytes.NewBufferString("bbb")
@@ -34,15 +28,12 @@ func main() {
 	wPool.Submit(buf3)
 
 	wPool.AddWorker(ctx)
-
 	wPool.Submit(buf4)
 	wPool.Submit(buf5)
-
 	wPool.DeleteWorker()
 	wPool.DeleteWorker()
 	wPool.DeleteWorker()
 	wPool.DeleteWorker()
-
 	fmt.Println("delete all")
 
 	wPool.Submit(buf6)
@@ -60,5 +51,22 @@ func main() {
 	fmt.Println("start wait")
 	wPool.Wait()
 	fmt.Println("stop wait")
-	// wPool.Close()
+
+	wPool.Free()
+
+	wPool.AddWorker(ctx)
+	wPool.AddWorker(ctx)
+
+	buf8 = bytes.NewBufferString("kkk again")
+	buf9 = bytes.NewBufferString("eeee again")
+
+	wPool.Submit(buf8)
+
+	wPool.Submit(buf9)
+
+	wPool.DeleteWorker()
+	wPool.DeleteWorker()
+	wPool.Wait()
+
+	fmt.Println("successfull returned")
 }
