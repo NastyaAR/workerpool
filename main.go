@@ -61,12 +61,12 @@ func main() {
 	buf9 = bytes.NewBufferString("eeee again")
 
 	wPool.Submit(buf8)
-
 	wPool.Submit(buf9)
 
 	wPool.DeleteWorker()
 	wPool.DeleteWorker()
+
 	wPool.Wait()
 
-	fmt.Println("successfull returned")
+	fmt.Println("successfully returned")
 }
